@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile Python
+      - name: Compile Python sources
         run: python -m compileall -q telegram-bot management-api
       - name: Build Telegram bot image
         run: docker build -t swg-telegram-bot ./telegram-bot
