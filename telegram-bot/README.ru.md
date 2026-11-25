@@ -25,7 +25,7 @@ WDTT/CSQTT — keyless-протоколы с отдельной выдачей �
     cp .env.telegram.example .env.telegram
     chmod 600 .env.gateway .env.telegram
 
-В .env.gateway задайте PANEL_USER, PANEL_PASSWORD, GATEWAY_API_KEY. Используйте отдельную учётную запись панели с правами управления, если она поддерживается вашей установкой.
+В .env.gateway задайте PANEL_USER, PANEL_PASSWORD и GATEWAY_API_KEY. Сгенерировать ключ можно командой openssl rand -hex 32. Если в панели включена 2FA, укажите PANEL_TOTP_SECRET (секрет TOTP в Base32, не шестизначный код). Используйте отдельную учётную запись панели с правами управления, если ваша установка поддерживает операторов.
 
 В .env.telegram задайте TELEGRAM_BOT_TOKEN от BotFather, тот же GATEWAY_API_KEY и TELEGRAM_ADMIN_IDS — ваш числовой Telegram user ID. Не используйте @username для авторизации.
 
@@ -36,7 +36,7 @@ WDTT/CSQTT — keyless-протоколы с отдельной выдачей �
 
 Для профиля host замените --profile master на --profile host.
 
-Откройте личный чат с ботом и отправьте /start. Бот принимает запросы только в личном чате и только от ID из TELEGRAM_ADMIN_IDS. Не добавляйте бота в группы.
+Откройте личный чат с ботом и отправьте /start. Если ваш ID ещё не добавлен в TELEGRAM_ADMIN_IDS, бот покажет ваш числовой Telegram ID. Добавьте его в .env.telegram и перезапустите контейнер. Бот принимает запросы только в личном чате и только от разрешённых ID. Не добавляйте бота в группы.
 
 ## Защита конфигураций
 
