@@ -142,6 +142,7 @@ async def peer_view(message, pid):
         [InlineKeyboardButton("🔓 Разблокировать" if p.get("disabled") else "⛔ Заблокировать",
                               callback_data=("p:unblock:" if p.get("disabled") else "p:block:") + pid)],
         [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
+        [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
         [InlineKeyboardButton("🗑 Удалить устройство", callback_data="p:delconfirm:" + pid)],
         [InlineKeyboardButton("⬅️ Назад", callback_data=("user:" + uid) if uid else "menu:peers")],
     ]
@@ -212,6 +213,8 @@ async def create_peer(message, context, index, title):
     uid = context.user_data.get("peer_user_id")
     await message.reply_text("Получаю свободный IP и создаю устройство…")
     try:
+        if not c["meta"].get("public_key") or not c["meta"].get("endpoint"):
+            raise RuntimeError("У интерфейса нет публичного ключа сервера или endpoint")
         alloc = await api("GET", "/v1/next-ip", params={"nodes": c["node"], "iface": c["iface"]})
         ip = str((alloc.get("data") or {}).get("next_ip") or "").split("/")[0]
         if not ip:
