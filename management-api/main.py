@@ -100,6 +100,7 @@ class PeerCreate(BaseModel):
     pubkey: str = ""
     psk: str = ""
     targets: list[PeerTarget] = Field(min_length=1)
+    overrides: dict[str, Any] | None = None
 
 @app.get("/healthz")
 def healthz():
