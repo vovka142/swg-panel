@@ -1,0 +1,30 @@
+name: Telegram management services
+
+on:
+  push:
+    branches: [feature/management-api-v2]
+    paths:
+      - "telegram-bot/**"
+      - "management-api/**"
+      - "docker-compose.management.yml"
+      - ".github/workflows/telegram-management.yml"
+  pull_request:
+    paths:
+      - "telegram-bot/**"
+      - "management-api/**"
+      - "docker-compose.management.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python
+        run: python -m compileall -q telegram-bot management-api
+      - name: Build Telegram bot image
+        run: docker build -t swg-telegram-bot ./telegram-bot
+      - name: Build management API image
+        run: docker build -t swg-management-api ./management-api
