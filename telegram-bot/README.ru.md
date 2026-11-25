@@ -2,61 +2,46 @@
 
 Бот управляет пользователями и WG/AWG-устройствами через management-api Gateway.
 
-## Функции
+## Возможности
 
 - Список пользователей и устройств.
-- Создание и удаление пользователя.
-- Блокировка и разблокировка пользователя.
+- Создание, переименование, блокировка, разблокировка и удаление пользователя.
 - Просмотр устройств пользователя.
-- Создание WG/AWG peer на выбранном узле и интерфейсе.
-- Получение свободного IP штатным API панели.
-- Генерация X25519 keypair и PSK в памяти бота.
-- Отправка готового .conf файлом в личный чат Telegram.
-- Блокировка, разблокировка и удаление устройства.
+- Создание WG/AWG peer на выбранном узле и интерфейсе с автоматическим выделением IP.
+- Генерация X25519 keypair и PSK в памяти бота и отправка готового .conf в Telegram.
+- Блокировка и разблокировка устройства.
+- Перевыпуск конфигурации существующего WG/AWG peer: бот создаёт новое устройство с новыми ключами и IP, отправляет конфиг и только после успешной доставки удаляет старое устройство.
+- Удаление устройства.
 
-WDTT/CSQTT — keyless-протоколы с отдельной выдачей паролей. Этот бот не создаёт их как WireGuard peer;
-для них требуется отдельный сценарий управления и выдачи credentials.
+WDTT/CSQTT — keyless-протоколы с отдельной выдачей паролей. Они не создаются как WireGuard peer и пока не поддерживаются этим ботом.
 
-## Переменные окружения
+## Настройка
 
-- TELEGRAM_BOT_TOKEN — токен от BotFather.
-- TELEGRAM_ADMIN_IDS — числовые Telegram user ID через запятую, без @username.
-- GATEWAY_URL — адрес management-api внутри Docker-сети.
-- GATEWAY_API_KEY — тот же ключ, что задан в Gateway.
-- HTTP_TIMEOUT — таймаут запросов, по умолчанию 30 секунд.
+В корне репозитория добавлен docker-compose.management.yml. Он добавляет Gateway и бота в ту же Docker-сеть, что и swg-panel; порт Gateway наружу не публикуется. Gateway обращается к локальному HTTP listener панели по адресу http://swg-panel:8088 внутри Docker-сети.
 
-## Добавление сервиса в Docker Compose
+Подготовьте env-файлы:
 
-Добавьте сервис рядом с management-api:
+    cp .env.gateway.example .env.gateway
+    cp .env.telegram.example .env.telegram
+    chmod 600 .env.gateway .env.telegram
 
-```yaml
-  telegram-bot:
-    build: ./telegram-bot
-    restart: unless-stopped
-    depends_on:
-      - management-api
-    environment:
-      - TELEGRAM_BOT_TOKEN
-      - TELEGRAM_ADMIN_IDS
-      - GATEWAY_URL=http://management-api:8090
-      - GATEWAY_API_KEY
-```
+В .env.gateway задайте PANEL_USER, PANEL_PASSWORD, GATEWAY_API_KEY. Используйте отдельную учётную запись панели с правами управления, если она поддерживается вашей установкой.
 
-Секреты задайте в .env с правами 0600. Telegram ID должен быть числовым ID пользователя, а не username.
-Бот принимает команды только в личном чате и только от ID из TELEGRAM_ADMIN_IDS. Не добавляйте его в группы.
+В .env.telegram задайте TELEGRAM_BOT_TOKEN от BotFather, тот же GATEWAY_API_KEY и TELEGRAM_ADMIN_IDS — ваш числовой Telegram user ID. Не используйте @username для авторизации.
 
-## Запуск
+Запуск. В команде укажите тот же профиль, с которым работает панель: master или host.
 
-```bash
-docker compose build management-api telegram-bot
-docker compose up -d management-api telegram-bot
-docker compose logs -f telegram-bot
-```
+    docker compose --profile master -f docker-compose.yml -f docker-compose.management.yml up -d --build management-api telegram-bot
+    docker compose --profile master -f docker-compose.yml -f docker-compose.management.yml logs -f telegram-bot
+
+Для профиля host замените --profile master на --profile host.
+
+Откройте личный чат с ботом и отправьте /start. Бот принимает запросы только в личном чате и только от ID из TELEGRAM_ADMIN_IDS. Не добавляйте бота в группы.
 
 ## Защита конфигураций
 
-Приватный ключ WireGuard/AWG генерируется в процессе бота и не записывается в БД или лог. Он отправляется
-в Telegram как файл .conf. Обычные облачные чаты Telegram не являются end-to-end зашифрованным хранилищем:
-файл останется в истории и будет доступен на устройствах аккаунта. Используйте только личный чат с
-разрешённым администратором, включите 2FA Telegram и защиту устройства. Если Telegram не доставил файл,
-бот пытается удалить только что созданный peer, чтобы не оставить устройство без конфига.
+Приватный ключ WireGuard/AWG генерируется в процессе бота и не записывается в БД или лог. Он отправляется в Telegram как файл .conf. Обычные облачные чаты Telegram не являются end-to-end зашифрованным хранилищем: файл останется в истории и будет доступен на устройствах аккаунта. Используйте только личный чат с разрешённым администратором, включите 2FA Telegram и защиту устройства.
+
+При перевыпуске конфигурации бот создаёт замену, отправляет файл и затем удаляет старый peer. Если отправка не удалась, новый peer удаляется, а старый остаётся действующим.
+
+Конфигурации WDTT/CSQTT и их пароли требуют отдельной реализации. Автоматическая публикация конфигов в зашифрованное хранилище панели также не выполняется: ключ шифрования остаётся на стороне браузера. Бот выдаёт конфиг напрямую в личный чат администратора.
