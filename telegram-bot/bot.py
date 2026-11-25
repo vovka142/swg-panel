@@ -62,7 +62,8 @@ async def fail(message, exc):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not allowed(update):
-        return await update.effective_message.reply_text("Доступ запрещён.")
+        return await update.effective_message.reply_text(
+            f"Доступ запрещён. Ваш Telegram ID: {update.effective_user.id if update.effective_user else 'unknown'}")
     context.user_data.clear()
     await update.effective_message.reply_text(
         f"SWG Panel · управление\nВаш Telegram ID: {update.effective_user.id}", reply_markup=menu())
