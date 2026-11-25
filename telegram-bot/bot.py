@@ -62,7 +62,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.effective_message.reply_text("Доступ запрещён.")
     context.user_data.clear()
     await update.effective_message.reply_text(
-        f"SWG Panel · управление\\nВаш Telegram ID: {update.effective_user.id}", reply_markup=menu())
+        f"SWG Panel · управление\nВаш Telegram ID: {update.effective_user.id}", reply_markup=menu())
 
 async def users_list(message):
     data = await api("GET", "/v1/users")
@@ -87,6 +87,7 @@ async def user_view(message, uid):
     peers = [p for p in (roster.get("peers") or {}).values() if p.get("user_id") == uid]
     rows = [
         [InlineKeyboardButton("📱 Устройства", callback_data="u:peers:" + uid)],
+        [InlineKeyboardButton("✏️ Изменить имя", callback_data="u:edit:" + uid)],
         [InlineKeyboardButton("➕ Добавить устройство", callback_data="u:addpeer:" + uid)],
         [InlineKeyboardButton("🔓 Разблокировать" if u.get("disabled") else "⛔ Заблокировать",
                               callback_data=("u:unblock:" if u.get("disabled") else "u:block:") + uid)],
@@ -94,8 +95,8 @@ async def user_view(message, uid):
         [InlineKeyboardButton("⬅️ К пользователям", callback_data="menu:users")],
     ]
     await message.reply_text(
-        f"👤 {u.get('name') or uid}\\nID: {uid}\\nСтатус: {'ЗАБЛОКИРОВАН' if u.get('disabled') else 'активен'}"
-        f"\\nУстройств: {len(peers)}\\nТег: {u.get('tag') or '—'}\\nЗаметка: {u.get('note') or '—'}",
+        f"👤 {u.get('name') or uid}\nID: {uid}\nСтатус: {'ЗАБЛОКИРОВАН' if u.get('disabled') else 'активен'}"
+        f"\nУстройств: {len(peers)}\nТег: {u.get('tag') or '—'}\nЗаметка: {u.get('note') or '—'}",
         reply_markup=InlineKeyboardMarkup(rows))
 
 async def user_peers(message, uid):
@@ -132,7 +133,7 @@ async def peer_view(message, pid):
         return await message.reply_text("Устройство не найдено.")
     uid = p.get("user_id")
     u = (roster.get("users") or {}).get(uid, {}) if uid else {}
-    targets = "\\n".join(
+    targets = "\n".join(
         f"• {t.get('node')} / {t.get('iface')} · {t.get('ip') or 'IP при подключении'}"
         for t in (p.get("targets") or [])) or "—"
     rows = [
@@ -142,9 +143,9 @@ async def peer_view(message, pid):
         [InlineKeyboardButton("⬅️ Назад", callback_data=("user:" + uid) if uid else "menu:peers")],
     ]
     await message.reply_text(
-        f"📱 {p.get('title') or pid}\\nID: {pid}\\nПользователь: {u.get('name') or 'не назначен'}"
-        f"\\nСтатус: {'ЗАБЛОКИРОВАНО' if p.get('disabled') else 'активно'}"
-        f"\\nПубличный ключ: {p.get('pubkey') or '—'}\\nРазмещение:\\n{targets}",
+        f"📱 {p.get('title') or pid}\nID: {pid}\nПользователь: {u.get('name') or 'не назначен'}"
+        f"\nСтатус: {'ЗАБЛОКИРОВАНО' if p.get('disabled') else 'активно'}"
+        f"\nПубличный ключ: {p.get('pubkey') or '—'}\nРазмещение:\n{targets}",
         reply_markup=InlineKeyboardMarkup(rows))
 
 async def peer_wizard(message, context, uid):
@@ -197,9 +198,9 @@ def build_conf(meta, priv, psk, ip):
     if g31 and str(keepalive).isdigit() and int(keepalive) > 0:
         keepalive = f"{keepalive}-{int(keepalive)+10}"
     lines.append(f"PersistentKeepalive = {keepalive}")
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
-async def create_peer(message, context, index):
+async def create_peer(message, context, index, title):
     choices = context.user_data.get("iface_choices") or []
     if index < 0 or index >= len(choices):
         return await message.reply_text("Выбор устарел. Начните добавление устройства заново.")
@@ -217,7 +218,7 @@ async def create_peer(message, context, index):
         priv, pub = b64(priv_raw), b64(pub_raw)
         psk = b64(secrets.token_bytes(32))
         conf = build_conf(c["meta"], priv, psk, ip)
-        payload = {"user_id": uid, "title": "Telegram device", "pubkey": pub, "psk": psk,
+        payload = {"user_id": uid, "title": title or "Telegram device", "pubkey": pub, "psk": psk,
                    "targets": [{"node": c["node"], "iface": c["iface"], "ip": ip, "type": c["kind"]}]}
         result = await api("POST", "/v1/peers", payload=payload)
         pid = (result.get("data") or {}).get("id")
@@ -226,7 +227,7 @@ async def create_peer(message, context, index):
         try:
             filename = f"swg-{re.sub(r'[^A-Za-z0-9_.-]+', '_', c['iface'])}-{ip.replace('.', '-')}.conf"
             await message.reply_document(document=conf.encode(), filename=filename,
-                caption=f"Устройство создано.\\nIP: {ip}\\nИнтерфейс: {c['iface']}\\nФайл содержит приватный ключ — не пересылайте его.")
+                caption=f"Устройство создано.\nIP: {ip}\nИнтерфейс: {c['iface']}\nФайл содержит приватный ключ — не пересылайте его.")
         except Exception:
             await api("DELETE", f"/v1/peers/{pid}")
             raise
@@ -250,20 +251,25 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await users_list(q.message)
         if data == "menu:newuser":
             context.user_data["flow"] = "new_user"
-            return await q.message.reply_text("Отправьте имя пользователя. Тег можно добавить через |\\nНапример: Иван Петров | staff")
+            return await q.message.reply_text("Отправьте имя пользователя. Тег можно добавить через |\nНапример: Иван Петров | staff")
         if data == "menu:peers":
             return await peers_list(q.message)
         if data == "menu:state":
             d = await state_data()
             r = d.get("roster") or {}
             return await q.message.reply_text(
-                f"Панель доступна.\\nУзлов: {len(d.get('nodes') or [])}"
-                f"\\nПользователей: {len(r.get('users') or {})}\\nУстройств: {len(r.get('peers') or {})}",
+                f"Панель доступна.\nУзлов: {len(d.get('nodes') or [])}"
+                f"\nПользователей: {len(r.get('users') or {})}\nУстройств: {len(r.get('peers') or {})}",
                 reply_markup=menu())
         if data.startswith("user:"):
             return await user_view(q.message, data.split(":", 1)[1])
         if data.startswith("u:peers:"):
             return await user_peers(q.message, data.split(":", 2)[2])
+        if data.startswith("u:edit:"):
+            uid = data.split(":", 2)[2]
+            context.user_data["flow"] = "edit_user"
+            context.user_data["edit_user_id"] = uid
+            return await q.message.reply_text("Отправьте новое имя пользователя.")
         if data.startswith("u:addpeer:"):
             return await peer_wizard(q.message, context, data.split(":", 2)[2])
         if data.startswith("u:block:") or data.startswith("u:unblock:"):
@@ -295,14 +301,30 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await api("DELETE", "/v1/peers/" + data.split(":", 2)[2])
             return await q.message.reply_text("Устройство удалено.", reply_markup=menu())
         if data.startswith("if:"):
-            return await create_peer(q.message, context, int(data.split(":", 1)[1]))
+            context.user_data["peer_choice_index"] = int(data.split(":", 1)[1])
+            context.user_data["flow"] = "peer_title"
+            return await q.message.reply_text("Введите название устройства (например, iPhone или Laptop).")
     except Exception as exc:
         await fail(q.message, exc)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not allowed(update):
         return await update.effective_message.reply_text("Доступ запрещён.")
-    if context.user_data.get("flow") != "new_user":
+    flow = context.user_data.get("flow")
+    if flow == "peer_title":
+        title = update.effective_message.text.strip()[:64]
+        index = int(context.user_data.get("peer_choice_index", -1))
+        context.user_data["flow"] = None
+        return await create_peer(update.effective_message, context, index, title)
+    if flow == "edit_user":
+        uid = context.user_data.get("edit_user_id")
+        name = update.effective_message.text.strip()[:64]
+        if not name:
+            return await update.effective_message.reply_text("Имя не может быть пустым.")
+        await api("PATCH", f"/v1/users/{uid}", payload={"name": name})
+        context.user_data["flow"] = None
+        return await user_view(update.effective_message, uid)
+    if flow != "new_user":
         return await update.effective_message.reply_text("Используйте кнопки меню или /start.", reply_markup=menu())
     parts = [x.strip() for x in update.effective_message.text.split("|", 1)]
     name = parts[0][:64]
@@ -314,7 +336,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = result.get("data") or {}
         context.user_data["flow"] = None
         await update.effective_message.reply_text(
-            f"Пользователь создан: {user.get('name') or name}\\nID: {user.get('id') or '—'}", reply_markup=menu())
+            f"Пользователь создан: {user.get('name') or name}\nID: {user.get('id') or '—'}", reply_markup=menu())
     except Exception as exc:
         await fail(update.effective_message, exc)
 
