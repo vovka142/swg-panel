@@ -3,13 +3,14 @@ import threading
 from typing import Any
 
 import requests
+import pyotp
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 PANEL_URL = os.environ["PANEL_URL"].rstrip("/")
 PANEL_USER = os.environ["PANEL_USER"]
 PANEL_PASSWORD = os.environ["PANEL_PASSWORD"]
-PANEL_TOTP_CODE = os.getenv("PANEL_TOTP_CODE", "")
+PANEL_TOTP_SECRET = os.getenv("PANEL_TOTP_SECRET", "")
 GATEWAY_API_KEY = os.environ["GATEWAY_API_KEY"]
 VERIFY_TLS = os.getenv("PANEL_VERIFY_TLS", "true").lower() not in {"0", "false", "no"}
 TIMEOUT = float(os.getenv("PANEL_TIMEOUT", "30"))
@@ -17,7 +18,7 @@ TIMEOUT = float(os.getenv("PANEL_TIMEOUT", "30"))
 app = FastAPI(title="SWG Panel Management API", version="0.1.0")
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
-    if not GATEWAY_API_KEY or authorization != f"Bearer {GATEWAY_API_KEY}":
+    if not GATEWAY_API_KEY or not __import__("hmac").compare_digest(authorization or "", f"Bearer {GATEWAY_API_KEY}"):
         raise HTTPException(status_code=401, detail="Invalid or missing gateway API token")
 
 class Panel:
@@ -29,7 +30,7 @@ class Panel:
     def _login(self) -> None:
         r = self.session.post(
             f"{PANEL_URL}/api/login",
-            json={"username": PANEL_USER, "password": PANEL_PASSWORD, **({"code": PANEL_TOTP_CODE} if PANEL_TOTP_CODE else {})},
+            json={"username": PANEL_USER, "password": PANEL_PASSWORD, **({"code": pyotp.TOTP(PANEL_TOTP_SECRET).now()} if PANEL_TOTP_SECRET else {})},
             timeout=TIMEOUT, verify=VERIFY_TLS, headers={"X-SWG-Lang": "en"},
         )
         try:
@@ -161,6 +162,6 @@ def block_peer(peer_id: str):
 def unblock_peer(peer_id: str):
     return panel.call("POST", "/api/peers/unblock", payload={"peer_id": peer_id})
 
-@app.get("/v1/configs/{pubkey}", dependencies=[Depends(require_api_key)])
+@app.get("/v1/configs", dependencies=[Depends(require_api_key)])
 def legacy_config(pubkey: str, node: str, iface: str):
     return panel.call("GET", "/api/config", params={"pubkey": pubkey, "node": node, "iface": iface})
