@@ -51,6 +51,7 @@ def menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👥 Пользователи", callback_data="menu:users")],
         [InlineKeyboardButton("➕ Создать пользователя", callback_data="menu:newuser")],
+        [InlineKeyboardButton("➕ Создать устройство без пользователя", callback_data="menu:newpeer")],
         [InlineKeyboardButton("📱 Все устройства", callback_data="menu:peers")],
         [InlineKeyboardButton("ℹ️ Состояние панели", callback_data="menu:state")],
     ])
@@ -336,6 +337,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await q.message.reply_text("Отправьте имя пользователя. Тег можно добавить через |\nНапример: Иван Петров | staff")
         if data == "menu:peers":
             return await peers_list(q.message)
+        if data == "menu:newpeer":
+            return await peer_wizard(q.message, context, None)
         if data == "menu:state":
             d = await state_data()
             r = d.get("roster") or {}
