@@ -330,15 +330,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data or ""
     try:
         if data == "menu:home":
+            context.user_data.clear()
             return await q.message.reply_text("SWG Panel", reply_markup=menu())
         if data == "menu:users":
+            context.user_data.clear()
             return await users_list(q.message)
         if data == "menu:newuser":
+            context.user_data.clear()
             context.user_data["flow"] = "new_user"
             return await q.message.reply_text("Отправьте имя пользователя. Тег можно добавить через |\nНапример: Иван Петров | staff")
         if data == "menu:peers":
+            context.user_data.clear()
             return await peers_list(q.message)
         if data == "menu:newpeer":
+            context.user_data.clear()
             return await peer_wizard(q.message, context, None)
         if data == "menu:state":
             d = await state_data()
@@ -416,9 +421,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = update.effective_message.text.strip()[:64]
         if not name:
             return await update.effective_message.reply_text("Имя не может быть пустым.")
-        await api("PATCH", f"/v1/users/{uid}", payload={"name": name})
-        context.user_data["flow"] = None
-        return await user_view(update.effective_message, uid)
+        try:
+            await api("PATCH", f"/v1/users/{uid}", payload={"name": name})
+            context.user_data["flow"] = None
+            return await user_view(update.effective_message, uid)
+        except Exception as exc:
+            return await fail(update.effective_message, exc)
     if flow != "new_user":
         return await update.effective_message.reply_text("Используйте кнопки меню или /start.", reply_markup=menu())
     parts = [x.strip() for x in update.effective_message.text.split("|", 1)]
