@@ -1,0 +1,41 @@
+# Дополнение для существующей bare-metal установки swg-panel.
+# Gateway и бот используют host network, но Gateway слушает только 127.0.0.1.
+# Панель в текущей конфигурации доступна как HTTP http://127.0.0.1:8443.
+services:
+  management-api:
+    build:
+      context: ./management-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env.gateway
+    environment:
+      PANEL_URL: http://127.0.0.1:8443
+      PANEL_VERIFY_TLS: "true"
+      GATEWAY_HOST: 127.0.0.1
+      GATEWAY_PORT: "8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  telegram-bot:
+    build:
+      context: ./telegram-bot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      management-api:
+        condition: service_healthy
+    env_file:
+      - .env.telegram
+    environment:
+      GATEWAY_URL: http://127.0.0.1:8090

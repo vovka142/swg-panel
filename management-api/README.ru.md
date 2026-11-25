@@ -10,6 +10,32 @@ Gateway обращается к swg-panel по http://swg-panel:8088 — это 
 
 Создайте .env.gateway и .env.telegram по примерам в корне репозитория и задайте права 0600. Gateway получает PANEL_USER, PANEL_PASSWORD и GATEWAY_API_KEY из .env.gateway. Бот получает TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_IDS и такой же GATEWAY_API_KEY из .env.telegram.
 
+## Запуск рядом с bare-metal панелью
+
+Для установки, где `swg-panel-server` работает как systemd-служба и слушает HTTP на `127.0.0.1:8443`, используйте отдельный Compose-файл `docker-compose.management-host.yml`. Он не запускает вторую копию панели и не публикует Gateway в сеть: оба контейнера работают в host network, а Gateway привязан только к loopback `127.0.0.1:8090`.
+
+```bash
+cp .env.gateway.example .env.gateway
+cp .env.telegram.example .env.telegram
+chmod 600 .env.gateway .env.telegram
+```
+
+Заполните `.env.gateway` и `.env.telegram` по инструкции ниже. Затем из корня репозитория:
+
+```bash
+docker compose -f docker-compose.management-host.yml up -d --build
+```
+
+Проверка:
+
+```bash
+docker compose -f docker-compose.management-host.yml ps
+docker compose -f docker-compose.management-host.yml logs --tail=100 management-api telegram-bot
+curl -fsS http://127.0.0.1:8090/healthz
+```
+
+Этот вариант рассчитан именно на HTTP listener панели `127.0.0.1:8443`. Если адрес или протокол listener изменился, сначала исправьте `PANEL_URL` в Compose-файле. Не публикуйте порт 8090 наружу.
+
 ## Авторизация
 
 Все маршруты, кроме /healthz, требуют:
