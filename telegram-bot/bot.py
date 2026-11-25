@@ -142,7 +142,6 @@ async def peer_view(message, pid):
         [InlineKeyboardButton("🔓 Разблокировать" if p.get("disabled") else "⛔ Заблокировать",
                               callback_data=("p:unblock:" if p.get("disabled") else "p:block:") + pid)],
         [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
-        [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
         [InlineKeyboardButton("🗑 Удалить устройство", callback_data="p:delconfirm:" + pid)],
         [InlineKeyboardButton("⬅️ Назад", callback_data=("user:" + uid) if uid else "menu:peers")],
     ]
@@ -176,6 +175,12 @@ async def peer_wizard(message, context, uid):
     rows.append([InlineKeyboardButton("Отмена", callback_data="menu:home")])
     await message.reply_text("Выберите узел и интерфейс:", reply_markup=InlineKeyboardMarkup(rows))
 
+def guard_allowed(value):
+    parts = [x.strip() for x in str(value or "0.0.0.0/0, ::/0").split(",") if x.strip()]
+    if "0.0.0.0/0" in parts and not any(":" in x for x in parts):
+        parts.append("::/0")
+    return ", ".join(parts)
+
 def build_conf(meta, priv, psk, ip, peer_overrides=None, target_overrides=None):
     awg = meta.get("awg_params") or {}
     overrides = {**(peer_overrides or {}), **(target_overrides or {})}
@@ -198,7 +203,7 @@ def build_conf(meta, priv, psk, ip, peer_overrides=None, target_overrides=None):
         else:
             lines.append(f"{key} = {value}")
     lines += ["", "[Peer]", f"PublicKey = {meta.get('public_key') or ''}", f"PresharedKey = {psk}",
-              "AllowedIPs = " + str(overrides.get("allowed") or "0.0.0.0/0, ::/0"), f"Endpoint = {meta.get('endpoint') or ''}"]
+              "AllowedIPs = " + guard_allowed(overrides.get("allowed") or "0.0.0.0/0, ::/0"), f"Endpoint = {meta.get('endpoint') or ''}"]
     keepalive = overrides.get("keepalive", meta.get("keepalive") if meta.get("keepalive") is not None else 25)
     if g31 and str(keepalive).isdigit() and int(keepalive) > 0:
         keepalive = f"{keepalive}-{int(keepalive)+10}"
@@ -251,6 +256,11 @@ async def reissue_peer(message, pid):
     old = (roster.get("peers") or {}).get(pid)
     if not old:
         return await message.reply_text("Устройство не найдено.")
+    if old.get("disabled"):
+        raise RuntimeError("Сначала разблокируйте устройство, затем перевыпускайте конфиг")
+    owner = (roster.get("users") or {}).get(old.get("user_id"), {})
+    if owner.get("disabled"):
+        raise RuntimeError("Пользователь заблокирован. Сначала разблокируйте пользователя")
     targets = old.get("targets") or []
     if not targets:
         raise RuntimeError("У устройства нет назначенных интерфейсов")
