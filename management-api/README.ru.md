@@ -64,6 +64,7 @@ Authorization: Bearer <MANAGEMENT_API_KEY>
 | POST | /v1/users/{id}/block | Заблокировать пользователя и его пиры |
 | POST | /v1/users/{id}/unblock | Разблокировать пользователя |
 | GET | /v1/peers?user_id=... | Список пиров |
+| GET | /v1/next-ip?nodes=...&iface=... | Запросить свободный IP |
 | POST | /v1/peers | Создать пир |
 | DELETE | /v1/peers/{id} | Удалить пир |
 | POST | /v1/peers/{id}/block | Заблокировать пир |
