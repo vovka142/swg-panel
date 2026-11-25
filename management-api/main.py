@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 PANEL_URL = os.environ["PANEL_URL"].rstrip("/")
 PANEL_USER = os.environ["PANEL_USER"]
 PANEL_PASSWORD = os.environ["PANEL_PASSWORD"]
+PANEL_TOTP_CODE = os.getenv("PANEL_TOTP_CODE", "")
 GATEWAY_API_KEY = os.environ["GATEWAY_API_KEY"]
 VERIFY_TLS = os.getenv("PANEL_VERIFY_TLS", "true").lower() not in {"0", "false", "no"}
 TIMEOUT = float(os.getenv("PANEL_TIMEOUT", "30"))
@@ -28,7 +29,7 @@ class Panel:
     def _login(self) -> None:
         r = self.session.post(
             f"{PANEL_URL}/api/login",
-            json={"username": PANEL_USER, "password": PANEL_PASSWORD},
+            json={"username": PANEL_USER, "password": PANEL_PASSWORD, **({"code": PANEL_TOTP_CODE} if PANEL_TOTP_CODE else {})},
             timeout=TIMEOUT, verify=VERIFY_TLS, headers={"X-SWG-Lang": "en"},
         )
         try:
@@ -73,15 +74,17 @@ class Panel:
 panel = Panel()
 
 class UserCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    tag: str = ""
-    note: str = ""
+    name: str = Field(min_length=1, max_length=64)
+    tag: str = Field(default="", max_length=32)
+    note: str = Field(default="", max_length=200)
 
 class UserUpdate(BaseModel):
-    id: str
-    name: str | None = None
-    tag: str | None = None
-    note: str | None = None
+    name: str | None = Field(default=None, max_length=64)
+    tag: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=200)
+    expiry: int | None = None
+    vk_links: list[str] | None = None
+    vk_link: str | None = None
 
 class PeerTarget(BaseModel):
     node: str
