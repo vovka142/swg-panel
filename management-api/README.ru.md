@@ -10,7 +10,7 @@ Gateway авторизуется штатной учётной записью и
 - Не отключайте проверку TLS панели в рабочей среде.
 - Для 2FA задайте PANEL_TOTP_SECRET (TOTP secret, не одноразовый код). Без него автоматический вход в панель с включённой 2FA не пройдёт.
 - Приватный ключ WireGuard/AWG генерируется клиентом. Gateway принимает pubkey и psk, но не генерирует и не возвращает приватный ключ.
-- /v1/configs/{pubkey} проксирует только legacy plaintext endpoint. При стандартном encrypted-хранилище конфиг зашифрован ключом, который остаётся в браузере, и Gateway не может его расшифровать.
+- /v1/configs проксирует только legacy plaintext endpoint. При стандартном encrypted-хранилище конфиг зашифрован ключом, который остаётся в браузере, и Gateway не может его расшифровать.
 
 ## Добавление сервиса в Docker Compose
 
@@ -22,9 +22,9 @@ Gateway авторизуется штатной учётной записью и
     restart: unless-stopped
     environment:
       PANEL_URL: http://swg-panel:8080
-      PANEL_USER: \${PANEL_API_USER}
-      PANEL_PASSWORD: \${PANEL_API_PASSWORD}
-      GATEWAY_API_KEY: \${MANAGEMENT_API_KEY}
+      PANEL_USER: ${PANEL_API_USER}
+      PANEL_PASSWORD: ${PANEL_API_PASSWORD}
+      GATEWAY_API_KEY: ${MANAGEMENT_API_KEY}
       PANEL_VERIFY_TLS: "true"
       PANEL_TOTP_SECRET: ${PANEL_TOTP_SECRET}
     ports:
