@@ -1,110 +1,48 @@
 # SWG Panel Management API Gateway
 
-Отдельный HTTP API для автоматизации управления существующей панелью. Серверный бинарник панели не меняется:
-Gateway авторизуется штатной учётной записью и вызывает внутренние маршруты /api/....
+Gateway — внутренний HTTP API для Telegram-бота. Он не публикует порт наружу в штатном Compose overlay и вызывает штатные /api/... маршруты панели с отдельной учётной записью.
 
-## Безопасность и ограничения
+## Развёртывание
 
-- Не публикуйте порт 8090 напрямую в интернет. Разместите Gateway за HTTPS reverse proxy и ограничьте доступ firewall.
-- Внешние клиенты используют отдельный GATEWAY_API_KEY. Пароль администратора и cookie панели остаются внутри Gateway.
-- Не отключайте проверку TLS панели в рабочей среде.
-- Для 2FA задайте PANEL_TOTP_SECRET (TOTP secret, не одноразовый код). Без него автоматический вход в панель с включённой 2FA не пройдёт.
-- Приватный ключ WireGuard/AWG генерируется клиентом. Gateway принимает pubkey и psk, но не генерирует и не возвращает приватный ключ.
-- /v1/configs проксирует только legacy plaintext endpoint. При стандартном encrypted-хранилище конфиг зашифрован ключом, который остаётся в браузере, и Gateway не может его расшифровать.
+Используйте общий Compose overlay из корня репозитория: docker-compose.management.yml. Настройка Telegram-бота описана в telegram-bot/README.ru.md.
 
-## Добавление сервиса в Docker Compose
+Gateway обращается к swg-panel по http://swg-panel:8088 — это внутренний listener в Docker-сети, не опубликованный на внешнем интерфейсе. Не подключайте к этой сети недоверенные контейнеры.
 
-Добавьте рядом с панелью (имя сервиса и порт панели сверьте с вашим compose):
+Создайте .env.gateway и .env.telegram по примерам в корне репозитория и задайте права 0600. Gateway получает PANEL_USER, PANEL_PASSWORD и GATEWAY_API_KEY из .env.gateway. Бот получает TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_IDS и такой же GATEWAY_API_KEY из .env.telegram.
 
-```yaml
-  management-api:
-    build: ./management-api
-    restart: unless-stopped
-    environment:
-      PANEL_URL: http://swg-panel:8080
-      PANEL_USER: ${PANEL_API_USER}
-      PANEL_PASSWORD: ${PANEL_API_PASSWORD}
-      GATEWAY_API_KEY: ${MANAGEMENT_API_KEY}
-      PANEL_VERIFY_TLS: "true"
-      PANEL_TOTP_SECRET: ${PANEL_TOTP_SECRET}
-    ports:
-      - "127.0.0.1:8090:8090"
-```
+## Авторизация
 
-Создайте длинный случайный MANAGEMENT_API_KEY. Значения PANEL_API_USER, PANEL_API_PASSWORD и MANAGEMENT_API_KEY
-поместите в .env с правами 0600.
+Все маршруты, кроме /healthz, требуют:
 
-Запуск:
+    Authorization: Bearer <GATEWAY_API_KEY>
 
-```bash
-docker compose build management-api
-docker compose up -d management-api
-docker compose logs -f management-api
-```
+Токен Gateway не является токеном панели. Cookie сессии панели хранится только внутри процесса Gateway.
 
-Swagger UI: http://127.0.0.1:8090/docs (локально или через SSH-туннель).
-
-## Авторизация клиентов
-
-Все маршруты, кроме /healthz, требуют заголовок:
-
-```http
-Authorization: Bearer <MANAGEMENT_API_KEY>
-```
-
-## Методы
+## Маршруты
 
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | /v1/state | Полный snapshot панели |
 | GET | /v1/users | Список пользователей |
 | POST | /v1/users | Создать пользователя |
-| PATCH | /v1/users/{id} | Изменить имя, тег, заметку |
+| PATCH | /v1/users/{id} | Изменить параметры пользователя |
 | DELETE | /v1/users/{id} | Удалить пользователя |
-| POST | /v1/users/{id}/block | Заблокировать пользователя и его пиры |
+| POST | /v1/users/{id}/block | Заблокировать пользователя |
 | POST | /v1/users/{id}/unblock | Разблокировать пользователя |
-| GET | /v1/peers?user_id=... | Список пиров |
-| GET | /v1/next-ip?nodes=...&iface=... | Запросить свободный IP |
-| POST | /v1/peers | Создать пир |
-| DELETE | /v1/peers/{id} | Удалить пир |
-| POST | /v1/peers/{id}/block | Заблокировать пир |
-| POST | /v1/peers/{id}/unblock | Разблокировать пир |
-| GET | /v1/configs?pubkey=...&node=...&iface=... | Legacy plaintext config |
+| GET | /v1/peers | Список устройств |
+| POST | /v1/peers | Создать WG/AWG peer |
+| GET | /v1/next-ip?nodes=...&iface=... | Получить свободный IP |
+| DELETE | /v1/peers/{id} | Удалить peer |
+| POST | /v1/peers/{id}/block | Заблокировать peer |
+| POST | /v1/peers/{id}/unblock | Разблокировать peer |
 
-### Создать пользователя
-
-```bash
-curl -X POST http://127.0.0.1:8090/v1/users \
-  -H "Authorization: Bearer $MANAGEMENT_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Ivan Petrov","tag":"staff","note":"Created by automation"}'
-```
-
-### Создать пир
-
-Ключи формируются на стороне вызывающего клиента. targets должны ссылаться на существующие node ID и
-интерфейсы; ip должен быть свободным адресом в подсети интерфейса.
-
-```json
-{
-  "user_id": "u_xxxxx",
-  "title": "iPhone",
-  "pubkey": "<client-generated-public-key>",
-  "psk": "<client-generated-preshared-key>",
-  "targets": [
-    {"node": "<node-id>", "iface": "awg0", "ip": "10.8.0.20", "type": "awg"}
-  ]
-}
-```
-
-Gateway передаёт payload штатному /api/peers/create. Он пока не выделяет IP автоматически и не строит WG/AWG
-конфиг. Для production нужно дополнительно реализовать и проверить клиентский генератор конфигураций с учётом
-параметров интерфейса, AWG и модели шифрования панели.
+Gateway не генерирует приватные ключи и не расшифровывает конфиги из зашифрованного хранилища панели. Генерация ключей и формирование клиентского файла выполняются Telegram-ботом в памяти.
 
 ## Проверка
 
-```bash
-curl -fsS http://127.0.0.1:8090/healthz
-curl -fsS http://127.0.0.1:8090/v1/users \
-  -H "Authorization: Bearer $MANAGEMENT_API_KEY"
-```
+После запуска бота:
+
+    docker compose --profile master -f docker-compose.yml -f docker-compose.management.yml ps
+    docker compose --profile master -f docker-compose.yml -f docker-compose.management.yml logs --tail=100 management-api telegram-bot
+
+Замените профиль master на host, если панель запущена с профилем host.
