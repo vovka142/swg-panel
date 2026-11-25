@@ -150,6 +150,10 @@ def peers(user_id: str | None = Query(default=None)):
 def create_peer(body: PeerCreate):
     return panel.call("POST", "/api/peers/create", payload=body.model_dump(exclude_none=True))
 
+@app.get("/v1/next-ip", dependencies=[Depends(require_api_key)])
+def next_ip(nodes: str, iface: str):
+    return panel.call("GET", "/api/next-ip", params={"nodes": nodes, "iface": iface})
+
 @app.delete("/v1/peers/{peer_id}", dependencies=[Depends(require_api_key)])
 def delete_peer(peer_id: str):
     return panel.call("POST", "/api/peers/delete", payload={"peer_id": peer_id})
