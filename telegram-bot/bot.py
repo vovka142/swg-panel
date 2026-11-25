@@ -143,10 +143,12 @@ async def peer_view(message, pid):
     rows = [
         [InlineKeyboardButton("🔓 Разблокировать" if p.get("disabled") else "⛔ Заблокировать",
                               callback_data=("p:unblock:" if p.get("disabled") else "p:block:") + pid)],
-        [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
         [InlineKeyboardButton("🗑 Удалить устройство", callback_data="p:delconfirm:" + pid)],
         [InlineKeyboardButton("⬅️ Назад", callback_data=("user:" + uid) if uid else "menu:peers")],
     ]
+    targets_for_reissue = p.get("targets") or []
+    if targets_for_reissue and all(str(t.get("type") or "wg") not in {"wdtt", "csqtt"} for t in targets_for_reissue):
+        rows.insert(1, [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)])
     await message.reply_text(
         f"📱 {p.get('title') or pid}\nID: {pid}\nПользователь: {u.get('name') or 'не назначен'}"
         f"\nСтатус: {'ЗАБЛОКИРОВАНО' if p.get('disabled') else 'активно'}"
