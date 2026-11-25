@@ -1,0 +1,24 @@
+services:
+  management-api:
+    build: ./management-api
+    restart: unless-stopped
+    depends_on:
+      swg-panel:
+        condition: service_started
+    env_file:
+      - .env.gateway
+    environment:
+      PANEL_URL: http://swg-panel:8088
+      PANEL_VERIFY_TLS: "true"
+    expose:
+      - "8090"
+
+  telegram-bot:
+    build: ./telegram-bot
+    restart: unless-stopped
+    depends_on:
+      - management-api
+    env_file:
+      - .env.telegram
+    environment:
+      GATEWAY_URL: http://management-api:8090
