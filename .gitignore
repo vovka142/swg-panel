@@ -1,6 +1,8 @@
 # local runtime / secrets — never commit
 data/
 .env
+.env.gateway
+.env.telegram
 *.pem
 id_swgpush*
 CLAUDE.md
