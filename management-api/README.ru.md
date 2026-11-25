@@ -8,7 +8,7 @@ Gateway авторизуется штатной учётной записью и
 - Не публикуйте порт 8090 напрямую в интернет. Разместите Gateway за HTTPS reverse proxy и ограничьте доступ firewall.
 - Внешние клиенты используют отдельный GATEWAY_API_KEY. Пароль администратора и cookie панели остаются внутри Gateway.
 - Не отключайте проверку TLS панели в рабочей среде.
-- При включённой 2FA автоматический вход может быть невозможен.
+- Для 2FA задайте PANEL_TOTP_SECRET (TOTP secret, не одноразовый код). Без него автоматический вход в панель с включённой 2FA не пройдёт.
 - Приватный ключ WireGuard/AWG генерируется клиентом. Gateway принимает pubkey и psk, но не генерирует и не возвращает приватный ключ.
 - /v1/configs/{pubkey} проксирует только legacy plaintext endpoint. При стандартном encrypted-хранилище конфиг зашифрован ключом, который остаётся в браузере, и Gateway не может его расшифровать.
 
@@ -26,6 +26,7 @@ Gateway авторизуется штатной учётной записью и
       PANEL_PASSWORD: \${PANEL_API_PASSWORD}
       GATEWAY_API_KEY: \${MANAGEMENT_API_KEY}
       PANEL_VERIFY_TLS: "true"
+      PANEL_TOTP_SECRET: ${PANEL_TOTP_SECRET}
     ports:
       - "127.0.0.1:8090:8090"
 ```
@@ -67,7 +68,7 @@ Authorization: Bearer <MANAGEMENT_API_KEY>
 | DELETE | /v1/peers/{id} | Удалить пир |
 | POST | /v1/peers/{id}/block | Заблокировать пир |
 | POST | /v1/peers/{id}/unblock | Разблокировать пир |
-| GET | /v1/configs/{pubkey}?node=...&iface=... | Legacy plaintext config |
+| GET | /v1/configs?pubkey=...&node=...&iface=... | Legacy plaintext config |
 
 ### Создать пользователя
 
