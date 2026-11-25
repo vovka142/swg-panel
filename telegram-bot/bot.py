@@ -1,4 +1,6 @@
 import base64
+import io
+import zipfile
 import logging
 import os
 import re
@@ -139,6 +141,7 @@ async def peer_view(message, pid):
     rows = [
         [InlineKeyboardButton("🔓 Разблокировать" if p.get("disabled") else "⛔ Заблокировать",
                               callback_data=("p:unblock:" if p.get("disabled") else "p:block:") + pid)],
+        [InlineKeyboardButton("♻️ Перевыпустить конфиг", callback_data="p:reissueconfirm:" + pid)],
         [InlineKeyboardButton("🗑 Удалить устройство", callback_data="p:delconfirm:" + pid)],
         [InlineKeyboardButton("⬅️ Назад", callback_data=("user:" + uid) if uid else "menu:peers")],
     ]
@@ -172,13 +175,14 @@ async def peer_wizard(message, context, uid):
     rows.append([InlineKeyboardButton("Отмена", callback_data="menu:home")])
     await message.reply_text("Выберите узел и интерфейс:", reply_markup=InlineKeyboardMarkup(rows))
 
-def build_conf(meta, priv, psk, ip):
+def build_conf(meta, priv, psk, ip, peer_overrides=None, target_overrides=None):
     awg = meta.get("awg_params") or {}
+    overrides = {**(peer_overrides or {}), **(target_overrides or {})}
     lines = ["[Interface]", f"PrivateKey = {priv}", f"Address = {ip}/32"]
-    dns = meta.get("dns") or []
+    dns = overrides.get("dns", meta.get("dns") or [])
     if dns:
         lines.append("DNS = " + ", ".join(map(str, dns)))
-    lines.append(f"MTU = {meta.get('mtu') or 1280}")
+    lines.append(f"MTU = {overrides.get('mtu') or meta.get('mtu') or 1280}")
     order = ["Jc","Jmin","Jmax","S1","S2","S3","S4","H1","H2","H3","H4","I1","I2","I3","I4","I5",
              "HeaderProtectionKey","RandomTrailers","ContentPaddingAddition","RekeyAfterTime","RekeyTimeout",
              "RejectAfterTime","KeepaliveTimeout","MaxHandshakeAttempts","DisableCookies"]
@@ -193,8 +197,8 @@ def build_conf(meta, priv, psk, ip):
         else:
             lines.append(f"{key} = {value}")
     lines += ["", "[Peer]", f"PublicKey = {meta.get('public_key') or ''}", f"PresharedKey = {psk}",
-              "AllowedIPs = 0.0.0.0/0, ::/0", f"Endpoint = {meta.get('endpoint') or ''}"]
-    keepalive = meta.get("keepalive") if meta.get("keepalive") is not None else 25
+              "AllowedIPs = " + str(overrides.get("allowed") or "0.0.0.0/0, ::/0"), f"Endpoint = {meta.get('endpoint') or ''}"]
+    keepalive = overrides.get("keepalive", meta.get("keepalive") if meta.get("keepalive") is not None else 25)
     if g31 and str(keepalive).isdigit() and int(keepalive) > 0:
         keepalive = f"{keepalive}-{int(keepalive)+10}"
     lines.append(f"PersistentKeepalive = {keepalive}")
@@ -237,6 +241,71 @@ async def create_peer(message, context, index, title):
     finally:
         context.user_data.pop("iface_choices", None)
         context.user_data.pop("peer_user_id", None)
+
+async def reissue_peer(message, pid):
+    d = await state_data()
+    roster = d.get("roster") or {}
+    old = (roster.get("peers") or {}).get(pid)
+    if not old:
+        return await message.reply_text("Устройство не найдено.")
+    targets = old.get("targets") or []
+    if not targets:
+        raise RuntimeError("У устройства нет назначенных интерфейсов")
+    private = X25519PrivateKey.generate()
+    priv_raw = private.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    pub_raw = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    priv, pub = b64(priv_raw), b64(pub_raw)
+    psk = b64(secrets.token_bytes(32))
+    describe = d.get("describe") or {}
+    new_targets, configs = [], []
+    for t in targets:
+        node, iface = str(t.get("node") or ""), str(t.get("iface") or "")
+        kind = str(t.get("type") or "wg")
+        if kind in {"wdtt", "csqtt"}:
+            raise RuntimeError("WDTT/CSQTT credentials are not WireGuard configs; this device cannot be reissued by this flow")
+        meta = (describe.get(node) or {}).get(iface)
+        if not meta or not meta.get("public_key") or not meta.get("endpoint"):
+            raise RuntimeError(f"Нет актуальных параметров узла для {node}/{iface}")
+        alloc = await api("GET", "/v1/next-ip", params={"nodes": node, "iface": iface})
+        ip = str((alloc.get("data") or {}).get("next_ip") or "").split("/")[0]
+        if not ip:
+            raise RuntimeError(f"Не удалось получить свободный IP для {node}/{iface}")
+        new_targets.append({
+            "node": node, "iface": iface, "ip": ip, "type": kind,
+            **({"overrides": t["overrides"]} if t.get("overrides") else {}),
+        })
+        configs.append((f"{iface}-{ip.replace('.', '-')}.conf",
+                        build_conf(meta, priv, psk, ip, old.get("overrides"), t.get("overrides"))))
+    payload = {
+        "user_id": old.get("user_id"), "title": old.get("title") or "Reissued device",
+        "pubkey": pub, "psk": psk, "targets": new_targets,
+        **({"overrides": old["overrides"]} if old.get("overrides") else {}),
+    }
+    created = await api("POST", "/v1/peers", payload=payload)
+    new_id = (created.get("data") or {}).get("id")
+    if not new_id:
+        raise RuntimeError("Панель не вернула ID нового устройства")
+    try:
+        if len(configs) == 1:
+            filename, conf = configs[0]
+            await message.reply_document(document=conf.encode(), filename=filename,
+                caption="Новый конфиг готов. После получения старое устройство будет отключено.")
+        else:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+                for filename, conf in configs:
+                    archive.writestr(filename, conf)
+            buf.seek(0)
+            await message.reply_document(document=buf, filename="swg-configs.zip",
+                caption="Новые конфиги для всех размещений устройства. После получения старое устройство будет отключено.")
+    except Exception:
+        await api("DELETE", f"/v1/peers/{new_id}")
+        raise
+    try:
+        await api("DELETE", f"/v1/peers/{pid}")
+        await message.reply_text("Конфиг перевыпущен. Старое устройство удалено; используйте новый файл.")
+    except Exception as exc:
+        await message.reply_text(f"Новый конфиг отправлен, но старое устройство не удалось удалить: {exc}. Удалите его вручную.")
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -291,6 +360,15 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action, pid = data.split(":", 2)[1:]
             await api("POST", f"/v1/peers/{pid}/{action}")
             return await peer_view(q.message, pid)
+        if data.startswith("p:reissueconfirm:"):
+            pid = data.split(":", 2)[2]
+            return await q.message.reply_text("Выпустить новую пару ключей и новый конфиг? Старый конфиг перестанет работать после успешной доставки нового файла.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Да, перевыпустить", callback_data="p:reissue:" + pid),
+                    InlineKeyboardButton("Отмена", callback_data="peer:" + pid)]]))
+        if data.startswith("p:reissue:"):
+            pid = data.split(":", 2)[2]
+            return await reissue_peer(q.message, pid)
         if data.startswith("p:delconfirm:"):
             pid = data.split(":", 2)[2]
             return await q.message.reply_text("Удалить устройство со всех серверов?",
