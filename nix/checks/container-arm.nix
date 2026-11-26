@@ -1,28 +1,28 @@
-# T-T1, container arm — everything about it that does NOT need the image.
+# T-T1, контейнерный вариант — всё, что не требует самого образа.
 #
-# ⚠️ WHY THIS EXISTS SEPARATELY, and why it never starts a container. A nixosTest VM has no
-# internet, so it cannot pull ghcr.io/sanityprotocol/swg-node. Two obvious ways round that were
-# considered and REJECTED:
-#   · a dockerTools stand-in built from our own source — it would be a THIRD declaration of the
-#     image's contents beside the Dockerfile and the shipped-assets gate, it would rot silently,
-#     and a green run against it would read as "the container arm works" when the shipped image
-#     might not. That is the exact failure this suite exists to prevent.
-#   · a pinned digest — rots on every image build, and the only thing it adds over this file is
-#     the shipped image's own build, which `docker.yml` already covers on every push.
+# ⚠️ ПОЧЕМУ ЭТОТ ТЕСТ ВЫНЕСЕН ОТДЕЛЬНО и почему он не запускает контейнер. У nixosTest VM нет
+# интернета, поэтому она не может загрузить ghcr.io/sanityprotocol/swg-node. Рассматривались два
+# очевидных обходных варианта, но от обоих ОТКАЗАЛИСЬ:
+#   · временный образ dockerTools, собранный из нашего исходного кода: это стало бы ТРЕТЬИМ описанием
+#     содержимого образа наряду с Dockerfile и проверкой поставляемых ресурсов; оно незаметно устаревало бы,
+#     а успешный тест означал бы «контейнерный вариант работает», хотя опубликованный образ мог бы не работать.
+#     Именно такую ошибку этот набор тестов и должен предотвращать.
+#   · закреплённый digest: он устаревает при каждой сборке образа, а единственное преимущество перед этим
+#     файлом — сборка самого опубликованного образа, которую `docker.yml` уже проверяет при каждом push.
 #
-# What is left is more than it sounds, because MOST of the container arm is host-side config:
-# sysctls, tmpfiles, the runtime, podman's policy.json, and the unit's ordering. None of that
-# needs an image, and none of it is covered today:
+# Оставшаяся проверка охватывает больше, чем кажется: БОЛЬШАЯ ЧАСТЬ контейнерного варианта — это настройки
+# хоста: sysctl, tmpfiles, среда выполнения, policy.json podman и порядок запуска unit. Для этого
+# образ не нужен, и сейчас ничто из перечисленного не проверяется:
 #
-#   probeN1C1 asserts the generated unit's contract tokens — but against a BUILT system, and a
-#   built system is never ACTIVATED (rig README): nothing has run, no tmpfiles, no services. It is
-#   also a MANUAL probe, where this runs on a schedule. `compose-nix-contract.mjs` reads the .nix
-#   SOURCE, so it cannot see a runtime value at all.
+# probeN1C1 проверяет токены контракта сгенерированного unit, но на СОБРАННОЙ системе. Такая система
+# никогда не АКТИВИРУЕТСЯ (см. rig README): ничего не запускалось, tmpfiles и сервисы не выполнялись.
+# Кроме того, это РУЧНАЯ проверка, а данный тест запускается по расписанию. `compose-nix-contract.mjs`
+# читает ИСХОДНЫЙ код .nix и потому вообще не видит значения во время выполнения.
 #
-# ⭐ The sharpest assert here is `route_localnet`. A fresh NixOS host comes up with it at 0, and
-# without it Force-DNS silently blackholes — it DNATs a client's :53 to a loopback dnsmasq and the
-# kernel drops it. That is a defect this project has actually shipped (it silent-failed inside the
-# container, which is why the module sets it on the HOST). Nothing else checks the live value.
+# ⭐ Самая важная проверка здесь — `route_localnet`. На чистой системе NixOS он равен 0, и без него
+# Force-DNS незаметно перестаёт работать: DNAT перенаправляет :53 клиента на loopback dnsmasq,
+# а ядро отбрасывает пакеты. Такой дефект уже попадал в выпуск проекта (в контейнере он завершался
+# без явной ошибки, поэтому модуль настраивает параметр НА ХОСТЕ). Никакая другая проверка не читает текущее значение.
 { srcRoot ? ../.. }:
 
 { lib, pkgs, ... }:
@@ -59,45 +59,45 @@ in
     def ok(name, detail=""):
         print(f"CA-ASSERT {name} OK {detail}")
 
-    # ── ⭐ the sysctls, at their LIVE values ───────────────────────────────────────────────────
-    # `mkDefault true` in the module is a declaration; this is the kernel's answer. The two are not
-    # the same claim, and it is the second one that Force-DNS depends on.
+    # ── ⭐ sysctl: проверяем фактические значения в РАБОТАЮЩЕЙ системе ──
+    # `mkDefault true` в модуле — это декларация; здесь проверяется ответ ядра. Это разные утверждения,
+    # и именно от второго зависит работа Force-DNS.
     with subtest("the host sysctls the container arm depends on are really set"):
         for key in ("net.ipv4.ip_forward", "net.ipv4.conf.all.route_localnet"):
             val = host.succeed(f"cat /proc/sys/{key.replace('.', '/')}").strip()
             assert val == "1", f"{key} is {val}, not 1 — Force-DNS would silently blackhole"
         ok("sysctls-live", "ip_forward=1 and route_localnet=1, read from /proc")
 
-    # ── the directories the container bind-mounts ──────────────────────────────────────────────
-    # tmpfiles only runs on an ACTIVATED system, which is the half probeN1C1 cannot reach.
+    # ── каталоги, подключаемые в контейнер bind mount ──
+    # tmpfiles запускается только в АКТИВИРОВАННОЙ системе — именно эту часть probeN1C1 проверить не может.
     with subtest("the bind-mount sources exist before any container does"):
         for d in ("${stateDir}", "${confDir}", "/run/wireguard"):
             host.succeed(f"test -d {d}")
-        # /run/wireguard is the one with a reason: without it the wg CLI inside the container cannot
-        # see a FOREIGN userspace interface, so the adoption scan silently omits what it exists for.
+        # /run/wireguard — каталог с конкретным назначением: без него команда wg внутри контейнера не видит
+        # ЧУЖОЙ userspace-интерфейс, поэтому проверка подключённых интерфейсов незаметно пропускает нужный объект.
         mode = host.succeed("stat -c %a /run/wireguard").strip()
         assert mode == "755", f"/run/wireguard is {mode}, not 755 — the container's wg CLI reads it"
         ok("tmpfiles-activated", "stateDir, confDir and /run/wireguard exist, 755")
 
-    # ── the runtime is actually running, not merely declared ───────────────────────────────────
-    # `oci-containers` does NOT enable the backend; the module does, on the grounds that the node
-    # must survive a reboot. A declaration that never starts is exactly the shape worth checking.
+    # ── среда выполнения действительно запущена, а не просто объявлена ──
+    # `oci-containers` НЕ включает службу backend автоматически; это делает модуль, поскольку узел
+    # должен переживать перезагрузку. Именно декларацию, которая так и не запускается, и важно проверять.
     with subtest("the container runtime is up"):
         host.wait_for_unit("docker.service")
         print(host.succeed("systemctl is-active docker.service"))
         ok("runtime-running", "docker.service active — oci-containers does not do this for us")
 
-    # ── the generated unit, and the contract inside its START SCRIPT ───────────────────────────
-    # ⚠️ `oci-containers` puts NOTHING in the .service — ExecStart points at a generated script in
-    # the store. Grepping the unit finds none of the contract; follow ExecStart first (rig README).
+    # ── сгенерированный unit и контракт внутри ЕГО СТАРТОВОГО СКРИПТА ──
+    # ⚠️ `oci-containers` не помещает НИЧЕГО в .service: ExecStart указывает на сгенерированный скрипт в
+    # store. Поиск по тексту unit не найдёт условий контракта — сначала нужно перейти по ExecStart (rig README).
     with subtest("the generated unit carries the whole contract"):
         unit = "docker-swg-node.service"
         host.succeed(f"systemctl cat {unit}")
-        # ⚠️ `systemctl show -p ExecStart --value` returns a STRUCTURED RECORD, not a command line:
+        # ⚠️ `systemctl show -p ExecStart --value` возвращает СТРУКТУРИРОВАННУЮ ЗАПИСЬ, а не командную строку:
         #   { path=/nix/store/…-docker-swg-node-start ; argv[0]=… ; ignore_errors=no ; … }
-        # so a `grep '^/nix/store'` matches nothing and the whole check dies on an exit code that
-        # says nothing about the module. `systemctl cat` gives the unit text, which is what
-        # probeN1C1 parses too — same idiom, same reason.
+        # поэтому `grep '^/nix/store'` ничего не найдёт, и проверка завершится с кодом, который ничего не говорит
+        # о модуле. `systemctl cat` возвращает текст unit — его же разбирает probeN1C1; используем тот же подход
+        # по той же причине.
         script = host.succeed(
             f"systemctl cat {unit} | grep -m1 '^ExecStart=' | cut -d= -f2- | awk '{{print $1}}'"
         ).strip()
@@ -108,10 +108,10 @@ in
             "--network=host",                       # every panel-picked port lands on the host
             "--cap-add=NET_ADMIN",
             "--device=/dev/net/tun",
-            # ⚠️ NIX interpolation below, NOT a Python f-string. `f"{stateDir}"` looks right and
-            # is not: Nix leaves a bare `{stateDir}` alone, so Python looks for a variable of that
-            # name and the driver's type check fails with "Name `stateDir` used when not defined".
-            # The let-binding lives on the NIX side of this file; only Nix can substitute it.
+            # ⚠️ Ниже используется интерполяция NIX, а НЕ f-строка Python. `f"{stateDir}"` выглядит правильно,
+            # но это не так: Nix оставляет обычное `{stateDir}` без изменений, Python ищет переменную с таким именем,
+            # и проверка типов драйвера завершается ошибкой «Name `stateDir` used when not defined».
+            # Привязка let находится на стороне NIX; подставить значение может только Nix.
             "${stateDir}:/var/lib/swg-noded",
             "${confDir}:/etc/amnezia/amneziawg",
             "/run/wireguard:/run/wireguard",
@@ -125,9 +125,9 @@ in
         assert not missing, f"the start script is missing: {missing}\\n---\\n{body}"
         ok("unit-contract", f"{len(want)} tokens, all present in the generated start script")
 
-    # CONTROL: the check above greps a file, so it is only as good as its ability to MISS something.
-    # A token that is deliberately not there must not be found — otherwise a `body` that came back
-    # empty, or a grep that matched everything, would read as a complete contract.
+    # КОНТРОЛЬНАЯ ПРОВЕРКА: выше выполняется поиск по файлу, поэтому надёжность зависит от того, способен ли он
+    # не найти лишнее. Маркер, которого заведомо нет, не должен обнаруживаться — иначе пустое `body`
+    # или grep, совпадающий со всем, будет ошибочно принят за полный контракт.
     with subtest("the contract check can fail"):
         body = host.succeed("cat $(systemctl cat docker-swg-node.service"
                             " | grep -m1 '^ExecStart=' | cut -d= -f2- | awk '{print $1}')")
@@ -135,18 +135,18 @@ in
         assert "swg-this-token-is-not-in-the-contract" not in body
         ok("contract-check-can-fail", "an absent token reads as absent")
 
-    # ── the ordering that a secret depends on ──────────────────────────────────────────────────
-    # The CONTAINER reads the environment file, so it is the container's unit that must wait for
-    # whatever produces it. Nothing static can see this.
+    # ── порядок запуска, от которого зависит доступность секрета ──
+    # КОНТЕЙНЕР читает файл окружения, поэтому именно его unit должен ждать процесс, который создаёт этот файл.
+    # Статическая проверка этого не обнаружит.
     with subtest("the container waits for what produces its secret"):
         after = host.succeed("systemctl show -p After --value docker-swg-node.service")
         assert "docker.service" in after, f"the unit is not ordered after docker: {after}"
         ok("unit-ordering", "ordered after the runtime")
 
-    # ── and the honest limit, stated rather than implied ───────────────────────────────────────
-    # The container itself cannot start: there is no registry to reach. That is not a failure of
-    # the module, and this suite must never report it as one — but nor may it be silent about it,
-    # or a reader takes "container arm: green" for more than it is.
+    # ── честно обозначаем границу возможностей теста ──
+    # Сам контейнер запустить нельзя: отсутствует доступный реестр образов. Это не ошибка модуля, и тест
+    # не должен сообщать об этом как о сбое. Но он также не должен умалчивать об ограничении,
+    # иначе читатель воспримет зелёный результат «контейнерный вариант» шире, чем следует.
     with subtest("the container cannot start here, and that is the known limit"):
         host.succeed("systemctl start docker-swg-node.service || true")
         state = host.succeed("systemctl show -p ActiveState --value docker-swg-node.service").strip()

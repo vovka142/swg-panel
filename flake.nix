@@ -1,20 +1,20 @@
-# swg-panel — Nix entry point.
+# swg-panel — точка входа для Nix.
 #
-# The module lives in the main repo on purpose (docs/NIXOS-SUPPORT-PLAN.md D1): VERSION is the
-# single source of truth stamped into every component, so a separate `swg-panel-nix` repo would be
-# version skew on day one. Every comparable project that ships its own NixOS module does the same.
+# Модуль намеренно находится в основном репозитории (docs/NIXOS-SUPPORT-PLAN.md D1): VERSION —
+# единый источник версии для всех компонентов. Отдельный репозиторий `swg-panel-nix` сразу привёл бы
+# к расхождению версий. Так же поступают сопоставимые проекты, поставляющие собственный модуль NixOS.
 #
-# Nix is deliberately OFF the main CI path (D17) — `checks` run in their own workflow and never
-# gate the image build, which is the release path.
+# Nix намеренно исключён из основного контура CI (D17): `checks` выполняются в отдельном процессе
+# и не блокируют сборку образа — именно она используется для выпуска.
 {
   description = "swg-panel — a self-hosted control panel for a small WireGuard / AmneziaWG service";
 
   inputs = {
-    # Pinned to a stable channel rather than unstable: the people this is for are running a VPN
-    # appliance, and the native arm's datapath (linuxPackages.amneziawg) is a kernel module whose
-    # breakage fails `nixos-rebuild` outright (VI.2). Consumers overriding this input is normal.
+    # Используется стабильный канал, а не unstable: целевые системы работают как VPN-шлюзы,
+    # а модуль ядра в сетевом тракте нативного варианта (linuxPackages.amneziawg) при поломке
+    # полностью срывает `nixos-rebuild` (VI.2). Переопределение этого входа пользователем допустимо.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-    # Only ever read by default.nix, to give channel users the same outputs without flakes.
+    # Используется только в default.nix, чтобы пользователи каналов получали те же выходы без flakes.
     flake-compat = { url = "github:edolstra/flake-compat"; flake = false; };
   };
 
@@ -22,18 +22,20 @@
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      # WHICH BUILD, threaded from the flake because only the flake knows it. `shortRev` exists for a clean
-      # git tree, `dirtyShortRev` for one with uncommitted changes, and neither for a tarball input — in
-      # which case this is "" and the package stamps the bare VERSION exactly as it did before.
-      # ⚠️ In the `let`, not in the outputs attrset: that set is not recursive, so a sibling could not read it.
-      # Parenthesised because `or` here is attribute-selection fallback, not a boolean.
+      # ИДЕНТИФИКАТОР СБОРКИ передаётся из flake, поскольку только flake знает его. `shortRev` используется
+      # для чистого дерева Git, `dirtyShortRev` — для дерева с незакоммиченными изменениями. Для
+      # архива tarball нет ни одного из них: в этом случае значение равно "", и пакет указывает
+      # только VERSION, как и раньше.
+      # ⚠️ Переменная находится в `let`, а не в наборе outputs: этот набор не рекурсивный, поэтому
+      # соседний атрибут не смог бы обратиться к ней.
+      # Скобки нужны потому, что `or` здесь задаёт значение по умолчанию при выборе атрибута, а не логическое ИЛИ.
       buildRev = self.shortRev or (self.dirtyShortRev or "");
       _revModule = { _module.args.swgBuildRev = buildRev; };
     in
     {
-      # The overlay is the supported way to get the package against YOUR nixpkgs rather than ours.
-      # The modules' `package` option defaults to a callPackage against the consumer's pkgs for the
-      # same reason (D1), so importing a module never drags this flake's nixpkgs into your closure.
+      # Overlay — рекомендуемый способ собрать пакет с ВАШИМ nixpkgs, а не с нашим.
+      # По той же причине (D1) параметр `package` модулей по умолчанию использует callPackage из pkgs
+      # самого пользователя. Импорт модуля не добавляет nixpkgs этого flake в его замыкание.
       overlays.default = final: _prev: {
         swg-panel = final.callPackage ./nix/package.nix { srcRoot = ./.; rev = buildRev; };
       };
@@ -48,43 +50,45 @@
       checks = forAllSystems (system:
         let pkgs = nixpkgs.legacyPackages.${system}; in
         {
-          # The package builds, its shebangs resolved, and every VERSION landed.
+          # Пакет собирается, пути в shebang разрешены, а VERSION записан во все нужные компоненты.
           package = self.packages.${system}.swg-panel;
         }
-        # The VM tests boot a real fleet, so they are x86_64 only — an aarch64 runner would emulate
-        # the guest under TCG rather than fail, which is slow enough to read as a hang.
+        # Виртуальные тесты запускают настоящую инфраструктуру, поэтому доступны только для x86_64:
+        # на runner aarch64 гостевая система эмулировалась бы через TCG, а не завершалась ошибкой.
+        # Это настолько медленно, что запуск можно принять за зависание.
         // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          # A panel and a real native node, enrolled and converging: the happy path, the CRITICAL
-          # invariant, the D6 reboot, and adoption's re-mint control.
+          # Панель и настоящий нативный узел проходят регистрацию и приходят к согласованному состоянию:
+          # штатный сценарий, КРИТИЧЕСКИЙ инвариант, перезагрузка D6 и контроль повторной выдачи при подключении.
           fleet-native = pkgs.testers.runNixOSTest (import ./nix/checks/fleet.nix { srcRoot = ./.; });
-          # The container arm's host-side half — sysctls, tmpfiles, the runtime, the generated
-          # unit's contract. It deliberately never starts a container: a test VM has no registry
-          # to pull from, and the alternatives (a stand-in image, a pinned digest) each cost more
-          # than they buy. The file says why, at length.
+          # Проверяется хостовая часть контейнерного варианта: sysctl, tmpfiles, среда выполнения и контракт
+          # сгенерированного юнита. Сам контейнер намеренно не запускается: у тестовой ВМ нет реестра,
+          # из которого можно загрузить образ, а альтернативы (тестовый образ или закреплённый digest)
+          # обходятся дороже, чем дают. Подробное объяснение приведено в самом файле.
           container-arm = pkgs.testers.runNixOSTest (import ./nix/checks/container-arm.nix { srcRoot = ./.; });
         });
 
-      # `services.swg-node` and `services.swg-panel` are claimed by this repo (D2) — maintained at the same
-      # commit as the code it starts. It takes nothing from this flake's inputs: the container arm
-      # names a published image, and each native arm's `package` option callPackages
-      # against the CONSUMER's pkgs, so importing this never drags our nixpkgs into your closure.
-      # ⚠️ THE REV REACHES THE MODULES THROUGH `_module.args`, NOT THROUGH THE PACKAGE ARGUMENT, and that is
-      # the whole trick. Each module's `package` option defaults to `pkgs.callPackage ../package.nix { }` —
-      # deliberately the CONSUMER's pkgs (D1), so importing a module never drags this flake's nixpkgs into
-      # their closure — and a default written there cannot see `self`. Threading it as a module arg keeps
-      # that property and simply tells the default which build it came from. A consumer who imports the
-      # module FILE directly, with no flake, gets the `""` fallback in the module's own signature and the
-      # bare VERSION exactly as before.
+      # `services.swg-node` и `services.swg-panel` принадлежат этому репозиторию (D2) и поддерживаются
+      # в одном коммите с запускаемым ими кодом. Они не используют входы этого flake: контейнерный
+      # вариант указывает опубликованный образ, а параметр `package` каждого нативного варианта
+      # вызывает callPackage из pkgs ПОЛЬЗОВАТЕЛЯ. Поэтому импорт не добавляет наш nixpkgs в его замыкание.
+      # ⚠️ REV передаётся модулям через `_module.args`, а НЕ через аргумент пакета — в этом и состоит
+      # решение. Параметр `package` каждого модуля по умолчанию вызывает `pkgs.callPackage ../package.nix { }`:
+      # намеренно используется pkgs ПОЛЬЗОВАТЕЛЯ (D1), чтобы импорт модуля не добавлял nixpkgs этого flake
+      # в его замыкание. При этом значение по умолчанию не может обратиться к `self`. Передача REV как
+      # аргумента модуля сохраняет это свойство и сообщает значению по умолчанию, из какой сборки оно
+      # получено. Если пользователь импортирует непосредственно ФАЙЛ модуля без flake, срабатывает
+      # резервное значение `""` из сигнатуры самого модуля, а VERSION остаётся прежним.
       #
-      # Measured before this existed: the box built through `nixosModules.default`, so stamping only
-      # `packages.<system>.swg-panel` and the overlay changed nothing at all — the installed VERSION still
-      # read `1.8.6-beta` after a full rebuild. Wiring the two outputs nobody's NixOS config goes through is
-      # exactly the shape of a fix that passes review and ships a no-op.
+      # До появления этого решения проверили на практике: система собиралась через `nixosModules.default`,
+      # поэтому изменение только `packages.<system>.swg-panel` и overlay ничего не меняло — после полной
+      # пересборки установленная VERSION по-прежнему содержала `1.8.6-beta`. Исправление, затрагивающее
+      # два выхода, которыми конфигурация NixOS вообще не пользуется, выглядит убедительно при проверке,
+      # но фактически ничего не исправляет.
       nixosModules = {
         swg-node = { imports = [ ./nix/modules/node.nix _revModule ]; };
         swg-panel = { imports = [ ./nix/modules/panel.nix _revModule ]; };
-        # Both, because a master runs both on one host and importing two modules to describe one
-        # machine is friction with nothing behind it.
+        # Оба модуля сразу: главный узел запускает оба компонента на одном хосте, а импорт двух модулей
+        # для описания одной машины создаёт лишние действия без какой-либо пользы.
         default = { imports = [ ./nix/modules/node.nix ./nix/modules/panel.nix _revModule ]; };
       };
     };
